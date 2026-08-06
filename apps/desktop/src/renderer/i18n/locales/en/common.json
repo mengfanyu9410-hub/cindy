@@ -3274,6 +3274,9 @@
           "listTitle": "Added Marketplaces",
           "pluginCount": "{{count}} plugins",
           "sourceError": "Unavailable",
+          "empty": "No plugin entries in this marketplace",
+          "skippedEntries": "Skipped {{count}} invalid plugin entries",
+          "unreadableEntries": "{{count}} plugin entries are temporarily unreadable; refresh to retry",
           "localBadge": "Local",
           "defaultRef": "Default branch",
           "neverSynced": "Never synced",
@@ -5066,6 +5069,7 @@
     },
     "modelSelector": {
       "budgetNeedsApiKey": "This model needs an API key — configure it in Settings",
+      "hidden": "Hidden",
       "subscriptionDirectDisabled": {
         "chatgpt": "Subscription-direct GPT models are not supported in SSH remote sessions yet",
         "xai": "Subscription-direct Grok models are not supported in SSH remote sessions yet",
