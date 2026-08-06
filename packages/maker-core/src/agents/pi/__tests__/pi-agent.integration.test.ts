@@ -353,6 +353,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
             id: 'pi-test-model',
             displayName: 'Pi Test Model',
             contextWindow: 200_000,
+            supportsImageInput: true,
             efforts: [],
             defaultEffort: null,
           },
