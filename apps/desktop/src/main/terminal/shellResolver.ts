@@ -13,8 +13,8 @@
  * 跨平台细节：
  *   * Windows 必须用 `process.env.COMSPEC` 兜底（不能假设 `cmd.exe` 在 PATH）
  *   * macOS GUI 启动的 Electron 里 `process.env.SHELL` 可能不存在（不是 login shell 拉起的）
- *   * Git Bash 探测复用 codex `PP()` 思路（PATH / `Program Files\Git\bin\bash.exe` /
- *     `(dirname git.exe)/../bin/bash.exe`）
+ *   * Git Bash 探测复用 codex `PP()` 思路（PATH 中的 `git-bash.exe` / `bash.exe` /
+ *     `Program Files\Git\bin\bash.exe` / `(dirname git.exe)/../bin/bash.exe`）
  *   * 无 PATH 走子进程的额外依赖 —— 简单 PATH 步进即可，不引 `which` npm 包
  */
 
@@ -109,7 +109,11 @@ function findGitBashOnWindows(): string | null {
   const direct = whichSync('git-bash.exe');
   if (direct) return direct;
 
-  // 2) git.exe 同级或 ../bin/bash.exe
+  // 2) 非默认安装可能只把 Git\bin 加入 PATH，其中只有 bash.exe
+  const pathBash = whichSync('bash.exe');
+  if (pathBash) return pathBash;
+
+  // 3) git.exe 同级或 ../bin/bash.exe
   const git = whichSync('git.exe');
   if (git) {
     const gitDir = path.win32.dirname(git);
@@ -127,7 +131,7 @@ function findGitBashOnWindows(): string | null {
     }
   }
 
-  // 3) Program Files\Git\bin\bash.exe（默认安装路径）
+  // 4) Program Files\Git\bin\bash.exe（默认安装路径）
   for (const envKey of ['ProgramFiles', 'ProgramFiles(x86)', 'LocalAppData']) {
     const root = process.env[envKey];
     if (!root) continue;

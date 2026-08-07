@@ -6,7 +6,7 @@
  *   4. resolveShellById：当前平台不可用回 null（卸了 pwsh、Windows 上选 zsh 等）
  *   5. resolveShellForCreate：pref 不可用回退 auto
  *   6. probeAvailableShells：进程级 memo 命中
- *   7. Git Bash：从 Program Files\Git\bin\bash.exe 探测
+ *   7. Git Bash：从 PATH 与 Program Files\Git\bin\bash.exe 探测
  *
  * 没有用真 fs / 真 PATH，全部依赖 vi.mock，避免开发机本地装了什么 shell 干扰结果。
  */
@@ -190,6 +190,19 @@ describe('resolveShellById', () => {
     expect(resolveShellById('gitbash')).toMatchObject({
       id: 'gitbash',
       command: 'C:\\Program Files\\Git\\bin\\bash.exe',
+      args: ['--login', '-i'],
+      displayName: 'Git Bash',
+    });
+  });
+
+  it('Windows Git Bash 探测命中 PATH 里的非默认 bash.exe', () => {
+    setPlatform('win32');
+    process.env.PATH = 'D:\\Git\\bin';
+    process.env.PATHEXT = '.EXE';
+    setExistingFiles(['D:\\Git\\bin\\bash.exe']);
+    expect(resolveShellById('gitbash')).toMatchObject({
+      id: 'gitbash',
+      command: 'D:\\Git\\bin\\bash.exe',
       args: ['--login', '-i'],
       displayName: 'Git Bash',
     });
