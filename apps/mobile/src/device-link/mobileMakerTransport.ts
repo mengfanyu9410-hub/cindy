@@ -74,7 +74,7 @@ export interface CreateSessionOptions {
   workspaceKind?: 'project' | 'dialogue';
   extraDirs?: string[];
   /**
-   * 显式选中的供应商(来源)id。仅当用户在模型下拉里选了非默认来源时带上;
+   * 与模型绑定的供应商(来源)id。用户手选或新建页自动默认派生出明确来源时带上;
    * 被控端据此把 sessions.provider_id 落库,使新会话首个请求即按该来源路由。
    * 省略 = NULL = 跟随被控端默认路由(对齐桌面 deviceLinkCreateArgs)。
    */

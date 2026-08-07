@@ -36,8 +36,8 @@ export interface NewSessionDraft {
   workingDir: string;
   model: string;
   /**
-   * 显式选中的供应商(来源)id。null = 跟随被控端默认路由(对齐桌面:草稿不写本地 prefs 默认,
-   * 由被控端 nativeDefaultSourceId 决定)。仅当用户在模型下拉里选了某来源时才非空。
+   * 选中的供应商(来源)id。null = 跟随被控端默认路由。用户手选时直接写入；自动默认时
+   * 与最近会话或 provider-aware 模型行一起派生，避免只跟随 model 却丢失对应凭证路由。
    */
   providerId: string | null;
   effort: string;
@@ -306,6 +306,8 @@ export function buildRecentWorkspaceOptions(
 export interface NewSessionRuntime {
   agentKind: NewSessionAgentKind;
   model: string;
+  /** 与 model 原子携带的来源；null 表示跟随被控端默认路由。 */
+  providerId: string | null;
   effort: string;
 }
 
@@ -329,7 +331,7 @@ function pickRegionalNewSessionDefault<T extends NewSessionDefaultModel>(
 }
 
 /**
- * 从现有会话列表挑"最近一次"的整套运行配置(agent + model + effort),用于新建对话默认跟随最近会话。
+ * 从现有会话列表挑"最近一次"的整套运行配置(agent + model + provider + effort),用于新建对话默认跟随最近会话。
  * 过滤:排除 status==='deleted'、无 model;可选 `deviceId`(只看该设备——模型列表 per-device,跨设备 model 可能
  * 在目标设备不存在);可选 `agentKind`(只看该 agent)。排序:按活动时间(userSendAt ?? updatedAt ?? createdAt)
  * 降序取第一条。映射 `RemoteSession.agentKind`('cc'|'codex') → NewSessionDraft 的 'claude-code'|'codex'。无匹配→null。
@@ -352,7 +354,12 @@ export function pickMostRecentSessionRuntime(
     const activityAt = session.userSendAt ?? session.updatedAt ?? session.createdAt;
     if (!best || activityAt.localeCompare(best.activityAt) > 0) {
       best = {
-        runtime: { agentKind, model, effort: session.effort?.trim() ?? '' },
+        runtime: {
+          agentKind,
+          model,
+          providerId: session.providerId?.trim() || null,
+          effort: session.effort?.trim() ?? '',
+        },
         activityAt,
       };
     }
@@ -361,16 +368,18 @@ export function pickMostRecentSessionRuntime(
 }
 
 /**
- * 算"切到某 agent 后的默认运行配置(model + effort)",供新建对话「切 agent」入口复用,
+ * 算"切到某 agent 后的默认运行配置(model + provider + effort)",供新建对话「切 agent」入口复用,
  * 与初始自动默认共用同一套 fallback 口径。纯函数:所有输入显式传入,不读 react / 设备状态。
  * model 优先级:
  *   1) 该 agent 的最近一次会话模型(pickMostRecentSessionRuntime,按 deviceId scope);
  *   2) 否则取区域门控后的新任务默认；无标记再取该 agent 的模型列表最上面那个
  *      (modelRows[0] —— providers 已加载时同步可得,与下拉渲染的第一项一致);
  *   3) 否则该 agent 的内置默认 DEFAULT_MODELS[agentKind]。
+ * provider:最近会话的显式来源仍提供该模型时跟随；来源目录不可用时保留最近路由；
+ *   无最近会话时跟随区域默认／列表首行的来源；已删除或不再提供该模型的来源回落 null。
  * effort:reconcile 到目标 model 的合法档(reconcileEffortForModel,base = 最近会话 effort ?? 当前 effort);
  *   拿不到目标 model 对应的 SectionModel(model 不在 modelRows 里,如走了 DEFAULT_MODELS 兜底或历史模型已下架)
- *   时保留 base effort 不动。providerId 由调用方统一置 null(各 agent 供应商集不同,回默认路由)。
+ *   时保留 base effort 不动。
  */
 export function pickAgentDefaultRuntime(args: {
   agentKind: NewSessionAgentKind;
@@ -383,22 +392,32 @@ export function pickAgentDefaultRuntime(args: {
   const recent = pickMostRecentSessionRuntime(sessions, { deviceId, agentKind });
   const baseEffort = recent?.effort ?? currentEffort;
   let model: string;
-  let sectionModel = recent?.model
-    ? modelRows.find((row) => row.model.id === recent.model)?.model
+  const exactRecentRow = recent?.providerId
+    ? modelRows.find(
+        (row) => row.provider.id === recent.providerId && row.model.id === recent.model,
+      )
+    : undefined;
+  let sectionRow = recent?.model
+    ? exactRecentRow ?? modelRows.find((row) => row.model.id === recent.model)
     : undefined;
   if (recent?.model) {
     model = recent.model;
   } else if (modelRows.length > 0) {
-    sectionModel = pickRegionalNewSessionDefault(
-      modelRows.map((row) => row.model),
-      agentKind,
-    ) ?? modelRows[0].model;
-    model = sectionModel.id;
+    sectionRow = modelRows.find((row) =>
+      row.model.newSessionDefault?.includes(newSessionDefaultMarker(agentKind)) === true,
+    ) ?? modelRows[0];
+    model = sectionRow.model.id;
   } else {
     model = DEFAULT_MODELS[agentKind];
   }
+  const providerId = recent
+    ? recent.providerId && (modelRows.length === 0 || exactRecentRow)
+      ? recent.providerId
+      : null
+    : sectionRow?.provider.id ?? null;
+  const sectionModel = sectionRow?.model;
   const effort = sectionModel ? reconcileEffortForModel(sectionModel, baseEffort) : baseEffort;
-  return { agentKind, model, effort };
+  return { agentKind, model, providerId, effort };
 }
 
 /**
@@ -406,10 +425,10 @@ export function pickAgentDefaultRuntime(args: {
  * 返回 null = 本次不动 draft(已手动选过 / 无 selectedDevice / 该设备已应用过 / modelRows 未就绪且无 recent);
  * 返回 { patch, appliedDeviceId } = 调用方 setDraft(prev => ({ ...prev, ...patch })) 并记录 appliedDeviceId。
  * 三条意图与 effect 完全一致:
- *   1) 有最近会话(按 selectedDeviceId scope)→ 整套跟随(agentKind + model + effort,effort reconcile 同
- *      pickAgentDefaultRuntime 口径:model 命中 modelRows 才 reconcile,否则保留;providerId 置 null);
+ *   1) 有最近会话(按 selectedDeviceId scope)→ 整套跟随(agentKind + model + provider + effort,effort reconcile 同
+ *      pickAgentDefaultRuntime 口径:model 命中 modelRows 才 reconcile,否则保留);
  *   2) 无最近会话 → 优先区域默认标记；provider 分段不可用时允许从 capabilities 扁平列表取标记；
- *      无标记再取 provider 列表最上面(model + effort reconcile + providerId:null,不动 agentKind);
+ *      无标记再取 provider 列表最上面(model + provider + effort reconcile,不动 agentKind);
  *   3) 无最近会话且两份模型列表都未就绪 → null(等下次数据就绪再设,绝不误设)。
  * currentEffort = 当前 draft.effort,作为 reconcile 的 base(与 effect 里 setDraft updater 读 current.effort 等价)。
  */
@@ -440,6 +459,13 @@ export function resolveNewSessionAutoDefault(input: {
   const recent = pickMostRecentSessionRuntime(sessions, { deviceId: selectedDeviceId });
   if (recent) {
     const sectionModel = modelRows.find((row) => row.model.id === recent.model)?.model;
+    const recentProviderStillAvailable = recent.providerId
+      ? recent.agentKind !== agentKind
+        || modelRows.length === 0
+        || modelRows.some(
+          (row) => row.provider.id === recent.providerId && row.model.id === recent.model,
+        )
+      : false;
     return {
       appliedDeviceId: selectedDeviceId,
       patch: {
@@ -449,16 +475,19 @@ export function resolveNewSessionAutoDefault(input: {
           ? reconcileEffortForModel(sectionModel, recent.effort || currentEffort)
           : recent.effort || currentEffort,
         permissionMode: defaultPermissionModeForNewSessionAgent(recent.agentKind),
-        providerId: null,
+        providerId: recentProviderStillAvailable ? recent.providerId : null,
       },
     };
   }
   // 无最近会话 → provider 区域标记优先；无 provider 结构时才信 capabilities 扁平标记。
   // provider-aware 列表由调用方传空 availableModels，避免区域默认绕过用户隐藏设置。
-  const providerModel = modelRows.length > 0
-    ? pickRegionalNewSessionDefault(modelRows.map((row) => row.model), agentKind) ?? modelRows[0].model
+  const providerRow = modelRows.length > 0
+    ? modelRows.find((row) =>
+        row.model.newSessionDefault?.includes(newSessionDefaultMarker(agentKind)) === true,
+      ) ?? modelRows[0]
     : undefined;
-  const flatDefault = providerModel
+  const providerModel = providerRow?.model;
+  const flatDefault = providerRow
     ? undefined
     : pickRegionalNewSessionDefault(availableModels, agentKind);
   const defaultModel = providerModel ?? flatDefault;
@@ -468,7 +497,7 @@ export function resolveNewSessionAutoDefault(input: {
     patch: {
       model: defaultModel.id,
       effort: reconcileEffortForModel(defaultModel, currentEffort),
-      providerId: null,
+      providerId: providerRow?.provider.id ?? null,
     },
   };
 }
@@ -492,7 +521,7 @@ export function buildRemoteCreateSessionOptions(draft: NewSessionDraft): CreateS
     permissionMode: draft.permissionMode,
     fastMode: draft.fastMode,
     ...(effort ? { effort } : {}),
-    // 仅显式选了非空来源才带 providerId(空 = NULL = 被控端默认路由,对齐桌面 deviceLinkCreateArgs)。
+    // 非空来源(手选或自动默认派生)必须随 model 原子传递；空 = 被控端默认路由。
     ...(providerId ? { providerId } : {}),
   };
   if (draft.workspaceKind === 'dialogue') return base;

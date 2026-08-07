@@ -77,12 +77,23 @@ function remoteSession(id: string, patch: Partial<RemoteSession> = {}): RemoteSe
 }
 
 describe('pickMostRecentSessionRuntime', () => {
-  it('picks the most recent session runtime (agent+model+effort), cc → claude-code', () => {
+  it('picks the most recent session runtime (agent+model+provider+effort), cc → claude-code', () => {
     const runtime = pickMostRecentSessionRuntime([
       remoteSession('old', { model: 'claude-opus-4-8', effort: 'high', userSendAt: '2026-01-01T00:00:01.000Z' }),
-      remoteSession('new', { model: 'gpt-5.4', effort: 'low', agentKind: 'codex', userSendAt: '2026-01-02T00:00:00.000Z' }),
+      remoteSession('new', {
+        model: 'gpt-5.4',
+        providerId: 'custom-openai',
+        effort: 'low',
+        agentKind: 'codex',
+        userSendAt: '2026-01-02T00:00:00.000Z',
+      }),
     ]);
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'low' });
+    expect(runtime).toEqual({
+      agentKind: 'codex',
+      model: 'gpt-5.4',
+      providerId: 'custom-openai',
+      effort: 'low',
+    });
   });
 
   it('maps cc agentKind to claude-code', () => {
@@ -129,17 +140,28 @@ describe('pickMostRecentSessionRuntime', () => {
 });
 
 describe('pickAgentDefaultRuntime', () => {
-  it('follows the target agent\'s most recent session model + effort (reconciled)', () => {
+  it('follows the target agent\'s most recent session model + provider + effort (reconciled)', () => {
     const runtime = pickAgentDefaultRuntime({
       agentKind: 'codex',
       sessions: [
         remoteSession('cc', { agentKind: 'cc', model: 'claude-opus-4-8', userSendAt: '2026-02-02T00:00:00.000Z' }),
-        remoteSession('cx', { agentKind: 'codex', model: 'gpt-5.4', effort: 'high', userSendAt: '2026-01-01T00:00:00.000Z' }),
+        remoteSession('cx', {
+          agentKind: 'codex',
+          model: 'gpt-5.4',
+          providerId: 'prov-gpt-5.4',
+          effort: 'high',
+          userSendAt: '2026-01-01T00:00:00.000Z',
+        }),
       ],
       modelRows: [modelRow('gpt-5.4', ['low', 'medium', 'high'], 'medium')],
       currentEffort: 'medium',
     });
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'high' });
+    expect(runtime).toEqual({
+      agentKind: 'codex',
+      model: 'gpt-5.4',
+      providerId: 'prov-gpt-5.4',
+      effort: 'high',
+    });
   });
 
   it('reconciles the recent effort down to the model default when unsupported', () => {
@@ -149,7 +171,12 @@ describe('pickAgentDefaultRuntime', () => {
       modelRows: [modelRow('gpt-5.4', ['low', 'medium'], 'low')],
       currentEffort: 'medium',
     });
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'low' });
+    expect(runtime).toEqual({
+      agentKind: 'codex',
+      model: 'gpt-5.4',
+      providerId: null,
+      effort: 'low',
+    });
   });
 
   it('keeps the recent effort when the recent model is not in modelRows (no SectionModel to reconcile)', () => {
@@ -159,7 +186,7 @@ describe('pickAgentDefaultRuntime', () => {
       modelRows: [modelRow('gpt-5.4', ['low', 'medium'], 'low')],
       currentEffort: 'medium',
     });
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-legacy', effort: 'high' });
+    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-legacy', providerId: null, effort: 'high' });
   });
 
   it('falls back to the top of the target agent\'s model list when it has no recent session', () => {
@@ -169,7 +196,7 @@ describe('pickAgentDefaultRuntime', () => {
       modelRows: [modelRow('gpt-5.4', ['low', 'medium'], 'low'), modelRow('gpt-mini', ['low'], 'low')],
       currentEffort: 'high', // 不被目标模型支持 → reconcile 到默认 'low'
     });
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'low' });
+    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', providerId: 'prov-gpt-5.4', effort: 'low' });
   });
 
   it('uses the regional default before the top row, with Pi sharing the claude-code marker', () => {
@@ -182,13 +209,13 @@ describe('pickAgentDefaultRuntime', () => {
       sessions: [],
       modelRows: rows,
       currentEffort: 'high',
-    })).toEqual({ agentKind: 'claude-code', model: 'regional', effort: 'medium' });
+    })).toEqual({ agentKind: 'claude-code', model: 'regional', providerId: 'prov-regional', effort: 'medium' });
     expect(pickAgentDefaultRuntime({
       agentKind: 'pi',
       sessions: [],
       modelRows: rows,
       currentEffort: 'high',
-    })).toEqual({ agentKind: 'pi', model: 'regional', effort: 'medium' });
+    })).toEqual({ agentKind: 'pi', model: 'regional', providerId: 'prov-regional', effort: 'medium' });
   });
 
   it('falls back to DEFAULT_MODELS and keeps current effort when providers are not loaded yet', () => {
@@ -197,13 +224,13 @@ describe('pickAgentDefaultRuntime', () => {
       sessions: [],
       modelRows: [],
       currentEffort: 'medium',
-    })).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'medium' });
+    })).toEqual({ agentKind: 'codex', model: 'gpt-5.4', providerId: null, effort: 'medium' });
     expect(pickAgentDefaultRuntime({
       agentKind: 'claude-code',
       sessions: [],
       modelRows: [],
       currentEffort: 'high',
-    })).toEqual({ agentKind: 'claude-code', model: 'claude-sonnet-4-6', effort: 'high' });
+    })).toEqual({ agentKind: 'claude-code', model: 'claude-sonnet-4-6', providerId: null, effort: 'high' });
   });
 
   it('scopes the recent lookup to the selected device', () => {
@@ -217,7 +244,22 @@ describe('pickAgentDefaultRuntime', () => {
       currentEffort: 'medium',
       deviceId: 'devA',
     });
-    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', effort: 'low' });
+    expect(runtime).toEqual({ agentKind: 'codex', model: 'gpt-5.4', providerId: null, effort: 'low' });
+  });
+
+  it('drops a recent provider that no longer offers the recent model', () => {
+    const runtime = pickAgentDefaultRuntime({
+      agentKind: 'codex',
+      sessions: [remoteSession('cx', {
+        agentKind: 'codex',
+        model: 'gpt-5.4',
+        providerId: 'removed-provider',
+        effort: 'high',
+      })],
+      modelRows: [modelRow('gpt-5.4', ['low', 'medium', 'high'], 'medium')],
+      currentEffort: 'medium',
+    });
+    expect(runtime.providerId).toBeNull();
   });
 });
 
@@ -236,7 +278,14 @@ describe('resolveNewSessionAutoDefault', () => {
   it('intent ①: follows the most recent session as a whole runtime (agent+model+effort reconciled)', () => {
     const result = resolveNewSessionAutoDefault({
       ...baseInput,
-      sessions: [remoteSession('cx', { agentKind: 'codex', model: 'gpt-5.4', effort: 'high', deviceLinkDeviceId: 'devA', userSendAt: '2026-01-01T00:00:00.000Z' })],
+      sessions: [remoteSession('cx', {
+        agentKind: 'codex',
+        model: 'gpt-5.4',
+        providerId: 'prov-gpt-5.4',
+        effort: 'high',
+        deviceLinkDeviceId: 'devA',
+        userSendAt: '2026-01-01T00:00:00.000Z',
+      })],
       modelRows: [modelRow('gpt-5.4', ['low', 'medium', 'high'], 'medium')],
     });
     expect(result).toEqual({
@@ -246,7 +295,7 @@ describe('resolveNewSessionAutoDefault', () => {
         model: 'gpt-5.4',
         effort: 'high',
         permissionMode: 'auto',
-        providerId: null,
+        providerId: 'prov-gpt-5.4',
       },
     });
   });
@@ -266,6 +315,20 @@ describe('resolveNewSessionAutoDefault', () => {
     });
   });
 
+  it('drops a stale recent provider when the current agent catalog no longer offers that model route', () => {
+    const result = resolveNewSessionAutoDefault({
+      ...baseInput,
+      sessions: [remoteSession('cc', {
+        agentKind: 'cc',
+        model: 'claude-sonnet-4-6',
+        providerId: 'removed-provider',
+        deviceLinkDeviceId: 'devA',
+      })],
+      modelRows: [modelRow('claude-sonnet-4-6', ['medium'], 'medium')],
+    });
+    expect(result?.patch.providerId).toBeNull();
+  });
+
   it('intent ②: no recent session → top of the model list (model + reconciled effort, agentKind untouched)', () => {
     const result = resolveNewSessionAutoDefault({
       ...baseInput,
@@ -274,7 +337,7 @@ describe('resolveNewSessionAutoDefault', () => {
     });
     expect(result).toEqual({
       appliedDeviceId: 'devA',
-      patch: { model: 'claude-sonnet-4-6', effort: 'low', providerId: null },
+      patch: { model: 'claude-sonnet-4-6', effort: 'low', providerId: 'prov-claude-sonnet-4-6' },
     });
     expect(result?.patch).not.toHaveProperty('agentKind');
   });
@@ -288,7 +351,7 @@ describe('resolveNewSessionAutoDefault', () => {
         modelRow('regional', ['medium'], 'medium', ['claude-code']),
       ],
     });
-    expect(result?.patch).toEqual({ model: 'regional', effort: 'medium', providerId: null });
+    expect(result?.patch).toEqual({ model: 'regional', effort: 'medium', providerId: 'prov-regional' });
   });
 
   it('intent ②b: provider list unavailable → regional default from normalized capabilities', () => {
@@ -430,6 +493,17 @@ describe('new session model', () => {
     });
   });
 
+  it('carries an auto-derived provider route into device-link create-session args', () => {
+    expect(buildRemoteCreateSessionOptions({
+      ...DEFAULT_NEW_SESSION_DRAFT,
+      workingDir: '/repo/xdt-maker',
+      providerId: 'deepseek',
+    })).toMatchObject({
+      model: 'claude-sonnet-4-6',
+      providerId: 'deepseek',
+    });
+  });
+
   it('builds folderless dialogue create-session args for controlled-side cwd allocation', () => {
     expect(buildRemoteCreateSessionOptions({
       ...DEFAULT_NEW_SESSION_DRAFT,
@@ -532,6 +606,12 @@ describe('new session model', () => {
     const transportSource = readTextLf(
       resolve(process.cwd(), 'src/device-link/mobileMakerTransport.ts'), 'utf8');
     expect(transportSource).toContain("listAvailableAgents: () => call('maker:list-available-agents', [])");
+  });
+
+  it('keeps the derived provider when restoring or switching the agent default', () => {
+    const newSource = readTextLf(resolve(process.cwd(), 'app/sessions/new.tsx'), 'utf8');
+    // 两个自动默认入口 + 既有手选入口都必须落来源，少任一处都会重新出现 providerId=null。
+    expect(newSource.match(/providerId: next\.providerId/g)).toHaveLength(3);
   });
 
   it('uses safe per-agent permission defaults for new interactive sessions', () => {

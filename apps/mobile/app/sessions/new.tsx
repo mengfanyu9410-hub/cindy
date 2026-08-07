@@ -825,7 +825,7 @@ export default function NewRemoteSessionScreen() {
           effort: next.effort,
           // 上次明确选择过的权限直接沿用；内置默认若升级到 Full access 仍需确认。
           permissionMode: confirmed ? nextPermissionMode : current.permissionMode,
-          providerId: null,
+          providerId: next.providerId,
         };
       });
     })();
@@ -3278,7 +3278,7 @@ export default function NewRemoteSessionScreen() {
   );
 
   // 切 agent:跟随该 agent 的最近会话 → 否则该 agent 列表最上面 → 否则内置默认(见 pickAgentDefaultRuntime),
-  // 同时 reconcile effort、清来源(默认路由)。手动切 agent = 手动选运行配置 → 之后自动默认不再覆盖。
+  // 同时跟随对应来源并 reconcile effort。手动切 agent = 手动选运行配置 → 之后自动默认不再覆盖。
   const switchAgent = useCallback((nextKind: NewSessionAgentKind) => {
     setAgentPickerOpen(false);
     if (draft.agentKind === nextKind) return;
@@ -3315,7 +3315,7 @@ export default function NewRemoteSessionScreen() {
           effort: next.effort,
           // 切到该 agent 时沿用其上次明确选择；无记忆的内置默认仍按升级规则确认。
           permissionMode: confirmed ? nextPermissionMode : current.permissionMode,
-          providerId: null,
+          providerId: next.providerId,
         };
       });
     });
